@@ -166,12 +166,13 @@ def variables(provider: str, flavor: str):
             },
             working_dir = "/workspace"
         )
-        shutil.rmtree(working_path)
         output = json.loads(output)
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
+    finally:
+        shutil.rmtree(working_path)
     return dict(
         output = output,
         error_status = error_status,
