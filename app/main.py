@@ -16,14 +16,16 @@ from captcha.image import ImageCaptcha
 
 logger = logging.getLogger(__name__)
 
+class Settings(BaseSettings):
+    frontend_url: str = "http://localhost:3000"
 
+
+settings = Settings()
 app = FastAPI()
 
 origins = [
-    "http://localhost:3000",
-    "https://localhost:3000",
+    settings.frontend_url,
     "http://127.0.0.1:3000",
-    "https://127.0.0.1:3080",
 ]
 
 app.add_middleware(
