@@ -66,7 +66,7 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
     error = ''
     try:
         # Prepare terraform working directory
-        local_path = os.getcwd()
+        local_path = '/tmp' # workaround of docker /var/run/docker.sock os.getcwd()
         working_path = os.path.join(local_path, "workdir-{}".format(id))
         if os.path.exists(working_path):
             raise RuntimeError(
