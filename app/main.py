@@ -146,7 +146,7 @@ def variables(provider: str, flavor: str, token: str = Header("")):
     error = None
     output = None
     id = str(uuid.uuid4())
-    local_path = os.getcwd()
+    local_path = '/tmp' # workaround of docker /var/run/docker.sock os.getcwd()
     working_path = os.path.join(local_path, "workdir-{}".format(id))
     try:
         if not valid_token(token):
