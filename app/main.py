@@ -1,6 +1,6 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, BackgroundTasks, Header, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, BaseSettings
 from typing import Optional
 import logging
 import docker
