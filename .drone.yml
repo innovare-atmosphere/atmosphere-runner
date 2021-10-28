@@ -1,0 +1,45 @@
+kind: pipeline
+type: docker
+name: default
+
+
+concurrency:
+  limit: 1
+
+steps:
+
+- name: build-atmosphere-runner  
+  image: appleboy/drone-ssh
+  environment:
+    GITUSER:
+      from_secret: gituser
+    GITPASS:
+      from_secret: gitpass
+  settings:
+    host: atmosphere.innovare.es
+    username:
+      from_secret: ssh_dev_user
+    password:
+      from_secret: ssh_dev_password
+    port: 22
+    envs:
+      - gituser
+      - gitpass
+    script:
+      - cd /home/developer/Atmosphere/atmosphere-runner/       
+      - git pull https://$${GITUSER}:$${GITPASS}@gogs.innovare.es/INNOVARE/atmosphere-runner
+      - sudo docker build --tag atmosphere:atmosphere-runner .
+
+- name: deploy-atmosphere
+  image: appleboy/drone-ssh
+  settings:
+    host: atmosphere.innovare.es
+    username:
+      from_secret: ssh_dev_user
+    password:
+      from_secret: ssh_dev_password
+    port: 22
+    script:
+      - cd /home/developer/Atmosphere/Atmosphere/
+      - sudo docker-compose down
+      - sudo docker-compose up -d
