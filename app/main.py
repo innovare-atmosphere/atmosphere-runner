@@ -193,7 +193,10 @@ def variables(provider: str, flavor: str, token: str = Header("")):
         error = str(error_ex)
         logger.exception(error_ex)
     finally:
-        shutil.rmtree(working_path)
+        try:
+            shutil.rmtree(working_path)
+        except:
+            pass
     return dict(
         output=output,
         error_status=error_status,
