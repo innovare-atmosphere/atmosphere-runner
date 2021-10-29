@@ -38,18 +38,23 @@ app.add_middleware(
 # TODO: this should be replaced by some backend store like redis
 storage = dict()
 tokens = dict()
+running_init_containers = dict()
+running_apply_containers = dict()
 
 
-def prefill_data(id: str, stream, key: str):
+'''def prefill_data(id: str, stream, key: str):
+    print ('im at stream')
     obj = storage.get(id)
     if not obj:
         obj = dict()
         storage[id] = obj
     for x in stream:
+        print ('loop at stream')
         oldval = obj.get(key) or ''
+        print(x)
         obj[key] = oldval + str(x, 'utf-8')
         storage[id] = obj
-    return obj[key]
+    return obj[key]'''
 
 
 def valid_token(token: str):
@@ -64,6 +69,13 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
     output_apply = ''
     error_status = False
     error = ''
+    storage[id] = dict(
+        output_init="",
+        output_apply="",
+        error_status=False,
+        error=None,
+        completed=False
+    )
     try:
         # Prepare terraform working directory
         local_path = '/tmp' # workaround of docker /var/run/docker.sock os.getcwd()
@@ -103,29 +115,67 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
                     'mode': 'rw'
                 }
             },
-            stream=True,
+            detach=True,
             working_dir="/workspace"
         )
+        running_init_containers[id] = stream_output_init
+        o1 = stream_output_init.wait()
+        output_init = stream_output_init.logs()
+        #{'Error': None, 'StatusCode': 0}
+        if (o1['Error'] or o1['StatusCode']!= 0):
+            raise RuntimeError(
+                "Error found ({}) Status Code ({}).".format(
+                    o1['Error'],
+                    o1['StatusCode']
+                )
+            )
         #logger.warning('this should be first')
-        output_init = prefill_data(id, stream_output_init, "output_init")
+        #output_init = prefill_data(id, stream_output_init, "output_init")
         # logger.warning(output_init)
         #logger.warning('this should be next')
         #output_init = str(output_init, "utf-8")
         stream_output_apply = client.containers.run(
             "hashicorp/terraform:latest",
-            "apply -auto-approve -json -var-file=\"{}\"".format(varsfile),
+            "apply -auto-approve -var-file=\"{}\"".format(varsfile),
             volumes={
                 repo_path: {
                     'bind': '/workspace',
                     'mode': 'rw'
                 }
             },
-            stream=True,
+            detach=True,
             working_dir="/workspace"
         )
-        output_apply = prefill_data(id, stream_output_apply, "output_apply")
+        running_apply_containers[id] = stream_output_apply
+        o2 = stream_output_apply.wait()
+        output_apply = stream_output_apply.logs()
+        #{'Error': None, 'StatusCode': 0}
+        if (o2['Error'] or o2['StatusCode']!= 0):
+            raise RuntimeError(
+                "Error found ({}) Status Code ({}).".format(
+                    o2['Error'],
+                    o2['StatusCode']
+                )
+            )
+        #output_apply = prefill_data(id, stream_output_apply, "output_apply")
         #output_apply = str(output_apply, "utf-8")
     except Exception as error_ex:
+        try:
+            stream_output_init.remove()
+        except:
+            pass
+        try:
+            del running_init_containers[id]
+        except:
+            pass
+        try:
+            stream_output_apply.remove()
+        except:
+            pass
+        try:
+            del running_apply_containers[id]
+        except:
+            pass
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
@@ -239,6 +289,11 @@ def task_state(task_uuid: str, token: str = Header("")):
                 )
             )
         status = storage.get(task_uuid)
+        if status and not status["completed"]:
+            if running_init_containers.get(task_uuid):
+                status["output_init"] = running_init_containers.get(task_uuid).logs()
+            if running_apply_containers.get(task_uuid):
+                status["output_apply"] = running_apply_containers.get(task_uuid).logs()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
