@@ -67,11 +67,13 @@ def valid_token(token: str):
 def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
     output_init = ''
     output_apply = ''
+    output_done = ''
     error_status = False
     error = ''
     storage[id] = dict(
         output_init="",
         output_apply="",
+        output_done="",
         error_status=False,
         error=None,
         completed=False
@@ -159,6 +161,18 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
             )
         #output_apply = prefill_data(id, stream_output_apply, "output_apply")
         #output_apply = str(output_apply, "utf-8")
+        output_done = client.containers.run(
+            "hashicorp/terraform:latest",
+            "output --json",
+            volumes={
+                repo_path: {
+                    'bind': '/workspace',
+                    'mode': 'rw'
+                }
+            },
+            working_dir="/workspace"
+        )
+        output_done = json.loads(output_done)
     except Exception as error_ex:
         try:
             stream_output_init.remove()
@@ -184,6 +198,7 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
         output_init=output_init,
         output_apply=output_apply,
         error_status=error_status,
+        output_done=output_done,
         error=error,
         completed=True
     )
