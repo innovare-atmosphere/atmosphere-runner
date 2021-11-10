@@ -111,6 +111,7 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
             (db.organization.id == db.user_organization.organization)
         ).select(
             db.organization.ALL,
+            orderby=db.organization.id,
             limitby=(0, 1),
             distinct=True
         )
