@@ -2,7 +2,7 @@ from pydal import DAL, Field
 import datetime
 
 def Database(uri):
-    db = DAL(uri, folder="./app/migrations", fake_migrate = True)
+    db = DAL(uri, folder="./app/migrations")
     db.define_table(
         'user',
         Field('email', 'string', distinct = True),
