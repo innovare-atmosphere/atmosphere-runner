@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     db_url: str = "sqlite://storage.db"
     domain_root: str = "atmos.live"
-    do_key: str = "a850e4dd0d4f92ff1f0f690847f73aa481518489c4ff0217d0d11a4d9a2bba69"
+    do_key: str = ""
     wait_value: int = 1
     nanoid_alphabet: str = "0123456789_abcdefghijklmnopqrstuvwxyz-"
     nanoid_length: str = 21
