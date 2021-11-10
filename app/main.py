@@ -2,6 +2,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, BackgroundTasks, Header, Body
 from pydantic import BaseModel, BaseSettings
 from typing import Optional
+from string import Template
 import logging
 import docker
 import os
@@ -13,15 +14,29 @@ import random
 import base64
 import string
 from captcha.image import ImageCaptcha
+from .database import Database
+import datetime
+import nanoid
+import re
+import requests
+import time
 
 logger = logging.getLogger(__name__)
 
+
 class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
+    db_url: str = "sqlite://storage.db"
+    domain_root: str = "atmos.live"
+    do_key: str = "a850e4dd0d4f92ff1f0f690847f73aa481518489c4ff0217d0d11a4d9a2bba69"
+    wait_value: int = 1
+    nanoid_alphabet: str = "0123456789_abcdefghijklmnopqrstuvwxyz-"
+    nanoid_length: str = 21
 
 
 settings = Settings()
 app = FastAPI()
+db = Database(settings.db_url)
 
 origins = [
     settings.frontend_url,
@@ -36,51 +51,104 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # TODO: this should be replaced by some backend store like redis
-storage = dict()
-tokens = dict()
+memory_tokens = dict()
 running_init_containers = dict()
 running_apply_containers = dict()
 
 
-'''def prefill_data(id: str, stream, key: str):
-    print ('im at stream')
-    obj = storage.get(id)
-    if not obj:
-        obj = dict()
-        storage[id] = obj
-    for x in stream:
-        print ('loop at stream')
-        oldval = obj.get(key) or ''
-        print(x)
-        obj[key] = oldval + str(x, 'utf-8')
-        storage[id] = obj
-    return obj[key]'''
+def attach_subdomain(ip_address, domain):
+    url = f"https://api.digitalocean.com/v2/domains/{settings.domain_root}/records"
+    subdomain = domain.replace(f".{settings.domain_root}", "")
+    payload = dict(type="A", name=subdomain, data=ip_address, priority=None,
+                   port=None, ttl="1800", weight=None, flags=None, tag=None)
+    headers = {
+        'content-type': "application/json",
+        'authorization': f"Bearer {settings.do_key}",
+        'cache-control': "no-cache"
+    }
+    response = requests.request("POST", url, data=json.dumps(payload), headers=headers)
+    print(response.status_code)
+    if not (response.status_code in [200,201,202,203,204,205,206]):
+        raise RuntimeError(
+            Template(f"Error attaching subdomain ($subdomain) for $domain to ip $ip_address. [{response.text}] Aborting.").substitute(
+                domain = domain, subdomain=subdomain, ip_address=ip_address)
+        )
+    return
+
+
+def wait_until_container_log(container, regex, action, *args, **kwargs):
+    logger.info(f"Started to watch stream, waiting for {regex}")
+    while True:
+        log = container.logs().decode("utf-8", "ignore")
+        attempt_match = re.search(regex, log)
+        if attempt_match:
+            reg_match_group = attempt_match.group(1)
+            action(reg_match_group, *args, **kwargs)
+            logger.info(f"Finished to watch stream, found {regex}")
+            return log
+        time.sleep(settings.wait_value)
 
 
 def valid_token(token: str):
-    item = tokens.get(token)
+    item = db.access_token(token=token)
     if not item:
         return False
-    return item.get("valid") == True
+    return item.valid_since != None
 
 
-def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
+def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables: dict):
     output_init = ''
     output_apply = ''
     output_done = ''
     error_status = False
     error = ''
-    storage[id] = dict(
-        output_init="",
-        output_apply="",
-        output_done="",
-        error_status=False,
-        error=None,
-        completed=False
-    )
     try:
+        # Prepare task data
+        organization = ''
+        found_organization = db(
+            (db.access_token.token == user_token) &
+            (db.access_token.owner == db.user_organization.user) &
+            (db.organization.id == db.user_organization.organization)
+        ).select(
+            db.organization.ALL,
+            limitby=(0, 1),
+            distinct=True
+        )
+        if not found_organization:
+            raise RuntimeError(
+                Template("User identified by token ($user_token) has no organization. Aborting.").substitute(
+                    user_token=user_token)
+            )
+        organization = found_organization.first()
+        domain = variables.get('domain')
+        subdomain = ''
+        if not domain:
+            # Generate a new domain
+            subdomain = nanoid.generate(settings.nanoid_alphabet,settings.nanoid_length)
+        else:
+            # Apply domain as a subdomain
+            # TODO: use case where domain is a valid one and not a subdomain
+            subdomain = domain
+        variables['domain'] = Template(f"$subdomain.$organization.{settings.domain_root}").substitute(
+            subdomain=subdomain, organization=organization.subdomain)
+        #TODO: Validate subdomain to be available, else include a default
+        db.task.insert(uuid=id,
+                       provider=provider,
+                       flavor=flavor,
+                       domain=domain,
+                       organization=organization.id,
+                       output=json.dumps(
+                           dict(
+                               output_init="",
+                               output_apply="",
+                               output_done="",
+                               error_status=False,
+                               error=None,
+                               completed=False
+                           )))
+        db.commit()
         # Prepare terraform working directory
-        local_path = '/tmp' # workaround of docker /var/run/docker.sock os.getcwd()
+        local_path = '/tmp'  # workaround of docker /var/run/docker.sock os.getcwd()
         working_path = os.path.join(local_path, "workdir-{}".format(id))
         if os.path.exists(working_path):
             raise RuntimeError(
@@ -122,9 +190,9 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
         )
         running_init_containers[id] = stream_output_init
         o1 = stream_output_init.wait()
-        output_init = stream_output_init.logs()
+        output_init = stream_output_init.logs().decode("utf-8", "ignore")
         #{'Error': None, 'StatusCode': 0}
-        if (o1['Error'] or o1['StatusCode']!= 0):
+        if (o1['Error'] or o1['StatusCode'] != 0):
             raise RuntimeError(
                 "Error found ({}) Status Code ({}).".format(
                     o1['Error'],
@@ -149,10 +217,15 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
             working_dir="/workspace"
         )
         running_apply_containers[id] = stream_output_apply
+        wait_until_container_log(
+            stream_output_apply,
+            regex="Host: (.*)\n",
+            action=attach_subdomain,
+            domain=variables['domain'])
         o2 = stream_output_apply.wait()
-        output_apply = stream_output_apply.logs()
+        output_apply = stream_output_apply.logs().decode("utf-8", "ignore")
         #{'Error': None, 'StatusCode': 0}
-        if (o2['Error'] or o2['StatusCode']!= 0):
+        if (o2['Error'] or o2['StatusCode'] != 0):
             raise RuntimeError(
                 "Error found ({}) Status Code ({}).".format(
                     o2['Error'],
@@ -194,14 +267,21 @@ def terra_invoke(id: str, provider: str, flavor: str, variables: dict):
         error = str(error_ex)
         logger.exception(error_ex)
     # TODO: Pack everything and delete the working directory
-    storage[id] = dict(
-        output_init=output_init,
-        output_apply=output_apply,
-        error_status=error_status,
-        output_done=output_done,
-        error=error,
-        completed=True
+    db.task.update_or_insert(
+        (db.task.uuid == id),
+        uuid=id,
+        output=json.dumps(
+            dict(
+                output_init=output_init,
+                output_apply=output_apply,
+                error_status=error_status,
+                output_done=output_done,
+                error=error,
+                completed=True
+            )
+        )
     )
+    db.commit()
     return
 
 
@@ -211,7 +291,7 @@ def variables(provider: str, flavor: str, token: str = Header("")):
     error = None
     output = None
     id = str(uuid.uuid4())
-    local_path = '/tmp' # workaround of docker /var/run/docker.sock os.getcwd()
+    local_path = '/tmp'  # workaround of docker /var/run/docker.sock os.getcwd()
     working_path = os.path.join(local_path, "workdir-{}".format(id))
     try:
         if not valid_token(token):
@@ -283,7 +363,7 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
             )
         id = str(uuid.uuid4())
         background_tasks.add_task(
-            terra_invoke, id, provider, flavor, variables)
+            terra_invoke, id, token, provider, flavor, variables)
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
@@ -296,6 +376,7 @@ def task_state(task_uuid: str, token: str = Header("")):
     error_status = False
     error = None
     status = None
+    reported_ip_address = None
     try:
         if not valid_token(token):
             raise RuntimeError(
@@ -303,17 +384,20 @@ def task_state(task_uuid: str, token: str = Header("")):
                     token
                 )
             )
-        status = storage.get(task_uuid)
+        task_info = db.task(uuid=task_uuid)
+        status = json.loads(task_info.output)
         if status and not status["completed"]:
             if running_init_containers.get(task_uuid):
-                status["output_init"] = running_init_containers.get(task_uuid).logs()
+                status["output_init"] = running_init_containers.get(
+                    task_uuid).logs()
             if running_apply_containers.get(task_uuid):
-                status["output_apply"] = running_apply_containers.get(task_uuid).logs()
+                status["output_apply"] = running_apply_containers.get(
+                    task_uuid).logs()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
-    return {"uuid": task_uuid, "status": status, "error_status": error_status, "error": error}
+    return {"uuid": task_uuid, "status": status, "error_status": error_status, "error": error, "reported_ip_address": reported_ip_address}
 
 
 @app.get("/token")
@@ -329,7 +413,9 @@ def authorize():
                                    for i in range(captcha_size)])
         # TODO: store in local memory (should be REDIS and should expire)
         id = str(uuid.uuid4())
-        tokens[id] = dict(text_validation=text_validation, valid=False)
+        db.access_token.insert(token=id, owner=None, valid_since=None)
+        db.commit()
+        memory_tokens[id] = dict(text_validation=text_validation, valid=False)
         bytes_png = image.generate(text_validation)
         captcha_image = base64.b64encode(bytes_png.read())
     except Exception as error_ex:
@@ -338,26 +424,40 @@ def authorize():
         logger.exception(error_ex)
     return {"captcha": captcha_image, "token": id, "error": error, "error_status": error_status}
 
+
 class Validation(BaseModel):
     token: str
     proof: str
 
+
 @app.post("/validate")
-def validate(validation:Validation = Body(None, embed = True)):
+def validate(validation: Validation = Body(None, embed=True)):
     error_status = False
     error = ""
     valid_item = False
     try:
-        item = tokens.get(validation.token)
-        if item is None:
+        item = db.access_token(token=validation.token)
+        memory_token = memory_tokens.get(validation.token)
+        # TODO: Case where user has attempted too much or the token has expired
+        if item is None or memory_token is None:
             raise RuntimeError(
                 "Invalid token {}".format(
                     validation.token
                 )
             )
-        item["valid"] = (item.get("text_validation") == validation.proof)
-        valid_item = item["valid"]
-        tokens[validation.token] = item
+        valid_item = (memory_token.get("text_validation") == validation.proof)
+        if valid_item:
+            # Create user
+            new_user = db.user.insert(email=None, password_hash=None)
+            # Update access_token
+            item.update_record(
+                valid_since=datetime.datetime.now(), owner=new_user)
+            # Create default organization and random subdomain
+            new_org = db.organization.insert(
+                name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet,settings.nanoid_length))
+            # Relate user and organization
+            db.user_organization.insert(user=new_user, organization=new_org)
+            db.commit()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
