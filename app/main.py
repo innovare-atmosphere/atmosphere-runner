@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     domain_root: str = "atmos.live"
     do_key: str = ""
     wait_value: int = 1
-    nanoid_alphabet: str = "0123456789_abcdefghijklmnopqrstuvwxyz-"
+    nanoid_alphabet: str = "0123456789abcdefghijklmnopqrstuvwxyz-"
     nanoid_length: int = 21
 
 
