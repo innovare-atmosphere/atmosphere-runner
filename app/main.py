@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     do_key: str = ""
     wait_value: int = 1
     nanoid_alphabet: str = "0123456789_abcdefghijklmnopqrstuvwxyz-"
-    nanoid_length: str = 21
+    nanoid_length: int = 21
 
 
 settings = Settings()
