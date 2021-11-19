@@ -22,6 +22,7 @@ import requests
 import time
 
 logger = logging.getLogger(__name__)
+subdomain_regex = re.compile("[0-9]*[a-z]+[a-z0-9]*")
 
 
 class Settings(BaseSettings):
@@ -66,12 +67,13 @@ def attach_subdomain(ip_address, domain):
         'authorization': f"Bearer {settings.do_key}",
         'cache-control': "no-cache"
     }
-    response = requests.request("POST", url, data=json.dumps(payload), headers=headers)
+    response = requests.request(
+        "POST", url, data=json.dumps(payload), headers=headers)
     print(response.status_code)
-    if not (response.status_code in [200,201,202,203,204,205,206]):
+    if not (response.status_code in [200, 201, 202, 203, 204, 205, 206]):
         raise RuntimeError(
             Template(f"Error attaching subdomain ($subdomain) for $domain to ip $ip_address. [{response.text}] Aborting.").substitute(
-                domain = domain, subdomain=subdomain, ip_address=ip_address)
+                domain=domain, subdomain=subdomain, ip_address=ip_address)
         )
     return
 
@@ -86,6 +88,12 @@ def wait_until_container_log(container, regex, action, *args, **kwargs):
             action(reg_match_group, *args, **kwargs)
             logger.info(f"Finished to watch stream, found {regex}")
             return log
+        container.reload()
+        if container.status != 'running':
+            raise RuntimeError(
+                Template("Execution finished before finding ($regex).").substitute(
+                    regex=regex)
+            )
         time.sleep(settings.wait_value)
 
 
@@ -123,30 +131,31 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
         organization = found_organization.first()
         domain = variables.get('domain')
         subdomain = ''
-        if not domain:
+        # or not valid domain
+        if not domain or not subdomain_regex.fullmatch(domain):
             # Generate a new domain
-            subdomain = nanoid.generate(settings.nanoid_alphabet,settings.nanoid_length)
+            subdomain = nanoid.generate(
+                settings.nanoid_alphabet, settings.nanoid_length)
         else:
             # Apply domain as a subdomain
             # TODO: use case where domain is a valid one and not a subdomain
             subdomain = domain
         variables['domain'] = Template(f"$subdomain.$organization.{settings.domain_root}").substitute(
             subdomain=subdomain, organization=organization.subdomain)
-        #TODO: Validate subdomain to be available, else include a default
+        # TODO: Validate subdomain to be available, else include a default
         db.task.insert(uuid=id,
                        provider=provider,
                        flavor=flavor,
-                       domain=domain,
+                       domain=variables['domain'],
                        organization=organization.id,
-                       output=json.dumps(
-                           dict(
-                               output_init="",
-                               output_apply="",
-                               output_done="",
-                               error_status=False,
-                               error=None,
-                               completed=False
-                           )))
+                       output=dict(
+                           output_init="",
+                           output_apply="",
+                           output_done="",
+                           error_status=False,
+                           error=None,
+                           completed=False
+                       ))
         db.commit()
         # Prepare terraform working directory
         local_path = '/tmp'  # workaround of docker /var/run/docker.sock os.getcwd()
@@ -248,6 +257,21 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
         )
         output_done = json.loads(output_done)
     except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.error(f"Task {id} errored.")
+        logger.exception(error_ex)
+    finally:
+        # Catch output
+        try:
+            output_init = stream_output_init.logs().decode("utf-8", "ignore")
+        except:
+            pass
+        try:
+            output_apply = stream_output_apply.logs().decode("utf-8", "ignore")
+        except:
+            pass
+        # Cleanup
         try:
             stream_output_init.remove()
         except:
@@ -264,22 +288,17 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
             del running_apply_containers[id]
         except:
             pass
-        error_status = True
-        error = str(error_ex)
-        logger.exception(error_ex)
     # TODO: Pack everything and delete the working directory
     db.task.update_or_insert(
         (db.task.uuid == id),
         uuid=id,
-        output=json.dumps(
-            dict(
-                output_init=output_init,
-                output_apply=output_apply,
-                error_status=error_status,
-                output_done=output_done,
-                error=error,
-                completed=True
-            )
+        output=dict(
+            output_init=output_init,
+            output_apply=output_apply,
+            error_status=error_status,
+            output_done=output_done,
+            error=error,
+            completed=True
         )
     )
     db.commit()
@@ -385,8 +404,10 @@ def task_state(task_uuid: str, token: str = Header("")):
                     token
                 )
             )
+        # TODO: Validate when token is valid but requested task doesnt belong to token/organization
         task_info = db.task(uuid=task_uuid)
-        status = json.loads(task_info.output)
+        status = task_info.output if task_info else None
+        print(type(status))
         if status and not status["completed"]:
             if running_init_containers.get(task_uuid):
                 status["output_init"] = running_init_containers.get(
@@ -399,6 +420,33 @@ def task_state(task_uuid: str, token: str = Header("")):
         error = str(error_ex)
         logger.exception(error_ex)
     return {"uuid": task_uuid, "status": status, "error_status": error_status, "error": error, "reported_ip_address": reported_ip_address}
+
+
+@app.get("/my-tasks")
+def my_tasks(token: str = Header("")):
+    error_status = False
+    error = None
+    all_tasks = None
+    try:
+        if not valid_token(token):
+            raise RuntimeError(
+                "Token {} is not valid.".format(
+                    token
+                )
+            )
+        user = db((db.access_token.token == token) & (
+            db.access_token.owner == db.user.id))._select(db.user.id)
+        user_tokens = db(db.access_token.owner.belongs(user)
+                         )._select(db.access_token.token)
+        all_tasks = db((db.task.organization == db.organization.id) &
+                       (db.organization.id == db.user_organization.organization) &
+                       (db.user_organization.user == db.access_token.owner) &
+                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id).as_list()
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {"all_tasks": all_tasks, "error": error, "error_status": error_status}
 
 
 @app.get("/token")
@@ -455,7 +503,7 @@ def validate(validation: Validation = Body(None, embed=True)):
                 valid_since=datetime.datetime.now(), owner=new_user)
             # Create default organization and random subdomain
             new_org = db.organization.insert(
-                name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet,settings.nanoid_length))
+                name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet, settings.nanoid_length))
             # Relate user and organization
             db.user_organization.insert(user=new_user, organization=new_org)
             db.commit()
