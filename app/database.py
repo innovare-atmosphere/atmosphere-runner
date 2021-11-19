@@ -37,6 +37,7 @@ def Database(uri):
         Field('domain', 'string'),
         Field('organization', 'references organization'),
         Field('created_at', 'datetime', default = datetime.datetime.now()),
-        Field('output', 'json')
+        Field('output', 'json'),
+        fake_migrate = True
     )
     return db
