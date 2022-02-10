@@ -3,6 +3,27 @@ import datetime
 
 def Database(uri):
     db = DAL(uri, folder="./app/migrations")
+    
+    db.define_table(
+        'provider',
+        Field('name', 'string', distinct = True),
+        Field('display_name', 'string'),
+        Field('url', 'string'),
+        Field('logo', 'string'),
+        Field('version', 'string'),
+        Field('description', 'text'),
+    )
+    
+    db.define_table(
+        'flavor',
+        Field('name', 'string', distinct = True),
+        Field('installation_pricing_normal', 'string'),
+        Field('installation_pricing_discounted', 'string'),
+        Field('monthly', 'string'),
+        Field('provider', 'reference provider'),
+        Field('payment_required', 'boolean')
+    )
+    
     db.define_table(
         'user',
         Field('email', 'string', distinct = True),

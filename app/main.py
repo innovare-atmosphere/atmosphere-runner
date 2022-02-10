@@ -69,7 +69,7 @@ def attach_subdomain(ip_address, domain):
     }
     response = requests.request(
         "POST", url, data=json.dumps(payload), headers=headers)
-    print(response.status_code)
+    #print(response.status_code)
     if not (response.status_code in [200, 201, 202, 203, 204, 205, 206]):
         raise RuntimeError(
             Template(f"Error attaching subdomain ($subdomain) for $domain to ip $ip_address. [{response.text}] Aborting.").substitute(
@@ -306,7 +306,7 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
 
 
 @app.get("/variables/{provider}/{flavor}")
-def variables(provider: str, flavor: str, token: str = Header("")):
+def variables(provider: str, flavor: str, payment: dict = dict(), token: str = Header("")):
     error_status = False
     error = None
     output = None
@@ -407,7 +407,7 @@ def task_state(task_uuid: str, token: str = Header("")):
         # TODO: Validate when token is valid but requested task doesnt belong to token/organization
         task_info = db.task(uuid=task_uuid)
         status = task_info.output if task_info else None
-        print(type(status))
+        #print(type(status))
         if status and not status["completed"]:
             if running_init_containers.get(task_uuid):
                 status["output_init"] = running_init_containers.get(
@@ -516,4 +516,65 @@ def validate(validation: Validation = Body(None, embed=True)):
         "token": validation.token,
         "error": error,
         "error_status": error_status
+    }
+
+@app.get("/flavors/{provider_name}")
+def flavor_data(provider_name: str):
+    flavor_details = db(
+        (db.provider.name == provider_name)&
+        (db.flavor.provider == db.provider.id)
+    ).select()
+    if not flavor_details:
+        return {
+            "error": "Flavors for provider {} not found".format(
+                provider_name
+            ),
+            "error_status": True
+        }
+    pricing = []
+    for detail in flavor_details:
+        pricing.append(
+            dict(
+                flavor = detail.flavor.name,
+                installation = dict(
+                    normal = detail.flavor.installation_pricing_normal,
+                    discounted = detail.flavor.installation_pricing_discounted
+                ),
+                monthly = detail.flavor.monthly,
+                payment_required = detail.flavor.payment_required or False
+            )
+        )
+    return {
+        "display_name": flavor_details.first().provider.display_name,
+        "name": flavor_details.first().provider.name,
+        "description": flavor_details.first().provider.description,
+        "url": flavor_details.first().provider.url,
+        "logo": flavor_details.first().provider.logo,
+        "version": flavor_details.first().provider.version,
+        "pricing": pricing,
+        "error_status": False
+    }
+    
+@app.get("/providers")
+def providers_list():
+    providers = db(
+        (db.provider.id >= 0)    
+    ).select()
+    if not providers:
+        providers = []
+    providers_output = []
+    for provider in providers:
+        providers_output.append(
+            {
+                "display_name": provider.display_name,
+                "name": provider.name,
+                "url": provider.url,
+                "logo": provider.logo,
+                "version": provider.version,
+                "description": provider.description,
+            }
+        )
+    return {
+        "providers": providers_output,
+        "error_status": False
     }
