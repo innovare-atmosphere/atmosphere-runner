@@ -42,4 +42,4 @@ jobs:
         run: ssh-keyscan -H ${{ secrets.SSH_HOST_ATMOSPHERE }} >> ~/.ssh/known_hosts
 
       - name: Deploy in server
-        run: ssh ${{ secrets.SSH_USER_ATMOSPHERE }}@${{ secrets.SSH_HOST_ATMOSPHERE }} 'sudo docker pull innovaresoftware/atmosphere-runner:main && sudo docker pull innovaresoftware/atmosphere:main && cd '"${{secrets.SSH_HOST_DIR_ATMOSPHERE}}"' && sudo VERSION_TAG='"${{ github.ref_name}}"' do_key='"${{ secrets.DO_KEY_ATMOSPHERE }}"'  database_password='"${{secrets.GENERATED_PASSWORD_ATMOSPHERE}}"' docker-compose up -d'
+        run: ssh ${{ secrets.SSH_USER_ATMOSPHERE }}@${{ secrets.SSH_HOST_ATMOSPHERE }} 'sudo docker pull innovaresoftware/atmosphere-runner:latest && sudo docker pull innovaresoftware/atmosphere:latest && cd '"${{secrets.SSH_HOST_DIR_ATMOSPHERE}}"' && sudo VERSION_TAG='"${{ github.ref_name}}"' do_key='"${{ secrets.DO_KEY_ATMOSPHERE }}"'  database_password='"${{secrets.GENERATED_PASSWORD_ATMOSPHERE}}"' docker-compose up -d'
