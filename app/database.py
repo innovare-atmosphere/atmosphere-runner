@@ -34,6 +34,7 @@ def Database(uri):
         'access_token',
         Field('owner', 'reference user'),
         Field('token', 'string', distinct = True),
+        Field('two_step', 'string'),
         Field('valid_since', 'datetime'),
         Field('created_at', 'datetime', default = datetime.datetime.now()),
     )

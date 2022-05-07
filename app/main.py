@@ -1,8 +1,10 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, BackgroundTasks, Header, Body
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import BaseModel, BaseSettings
 from typing import Optional
 from string import Template
+from random import randint
 import logging
 import docker
 import os
@@ -20,9 +22,11 @@ import nanoid
 import re
 import requests
 import time
+import random
 
 logger = logging.getLogger(__name__)
 subdomain_regex = re.compile("[0-9]*[a-z]+[a-z0-9]*")
+email_regex = re.compile("^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$")
 
 
 class Settings(BaseSettings):
@@ -33,6 +37,14 @@ class Settings(BaseSettings):
     wait_value: int = 1
     nanoid_alphabet: str = "0123456789abcdefghijklmnopqrstuvwxyz-"
     nanoid_length: int = 21
+    mail_username: str = ""
+    mail_password: str = ""
+    mail_from: str = ""
+    mail_port: str = ""
+    mail_server: str = ""
+    mail_from_name: str = ""
+    class Config:
+        env_file = ".env"
 
 
 settings = Settings()
@@ -306,7 +318,7 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
 
 
 @app.get("/variables/{provider}/{flavor}")
-def variables(provider: str, flavor: str, payment: dict = dict(), token: str = Header("")):
+def variables(provider: str, flavor: str, token: str = Header("")):
     error_status = False
     error = None
     output = None
@@ -435,19 +447,53 @@ def my_tasks(token: str = Header("")):
                 )
             )
         user = db((db.access_token.token == token) & (
-            db.access_token.owner == db.user.id))._select(db.user.id)
+            db.access_token.owner == db.user.id))._select(db.user.id, distinct=True)
         user_tokens = db(db.access_token.owner.belongs(user)
-                         )._select(db.access_token.token)
+                         )._select(db.access_token.token, distinct=True)
         all_tasks = db((db.task.organization == db.organization.id) &
                        (db.organization.id == db.user_organization.organization) &
                        (db.user_organization.user == db.access_token.owner) &
-                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id).as_list()
+                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=True).as_list()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
     return {"all_tasks": all_tasks, "error": error, "error_status": error_status}
 
+class PaymentInformation(BaseModel):
+    card_number: str
+    cardholder: str
+    cvv: str
+    exp_date: str
+    type: str
+    
+
+class PaymentDetails(BaseModel):
+    method: str
+    information: Optional[PaymentInformation] = None
+
+@app.post("/pay")
+def my_tasks(details: PaymentDetails = Body(None, embed = True), token: str = Header("")):
+    error_status = False
+    error = None
+    success = False
+    try:
+        if not valid_token(token):
+            raise RuntimeError(
+                "Token {} is not valid.".format(
+                    token
+                )
+            )
+        #print("Simulating payment with the following method:")
+        #print(details.method)
+        #print("The information for the payment is as follows:")
+        #print(details.information)
+        success = True #random.choice([True, False])
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {"success": success, "error": error, "error_status": error_status}
 
 @app.get("/token")
 def authorize():
@@ -480,11 +526,20 @@ class Validation(BaseModel):
 
 
 @app.post("/validate")
-def validate(validation: Validation = Body(None, embed=True)):
+async def validate(email: str = Body(None, embed=True), validation: Validation = Body(None, embed=True)):
     error_status = False
     error = ""
     valid_item = False
+    valid_email = False
     try:
+        #validate email
+        valid_email = re.search(email_regex, email) is not None
+        if not valid_email:
+            raise RuntimeError(
+                "Email {} is not valid.".format(
+                    email
+                )
+            )
         item = db.access_token(token=validation.token)
         memory_token = memory_tokens.get(validation.token)
         # TODO: Case where user has attempted too much or the token has expired
@@ -496,16 +551,39 @@ def validate(validation: Validation = Body(None, embed=True)):
             )
         valid_item = (memory_token.get("text_validation") == validation.proof)
         if valid_item:
-            # Create user
-            new_user = db.user.insert(email=None, password_hash=None)
+            # Create user (or find it)
+            the_user = db.user(email = email)
+            if not the_user:
+                the_user = db.user.insert(email=email, password_hash=None)
+                # Create default organization and random subdomain
+                new_org = db.organization.insert(
+                    name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet, settings.nanoid_length))
+                # Relate user and organization
+                db.user_organization.insert(user=the_user, organization=new_org)
+            # Send e-mail with code
+            code = randint(100000, 999999)
+            message = MessageSchema(
+                subject="Login code to Atmosphere",
+                recipients=[email],
+                template_body=dict(body = dict(email=email, code=str(code))),
+                subtype='html',
+            )
+            #print(settings)
+            fm = FastMail(ConnectionConfig(
+                MAIL_USERNAME=settings.mail_username,
+                MAIL_PASSWORD=settings.mail_password,
+                MAIL_FROM=settings.mail_from,
+                MAIL_PORT=settings.mail_port,
+                MAIL_SERVER=settings.mail_server,
+                MAIL_FROM_NAME=settings.mail_from_name,
+                MAIL_TLS=False,
+                MAIL_SSL=True,
+                USE_CREDENTIALS=True,
+                TEMPLATE_FOLDER='./templates/email'
+            ))
+            await fm.send_message(message, template_name='email.html')
             # Update access_token
-            item.update_record(
-                valid_since=datetime.datetime.now(), owner=new_user)
-            # Create default organization and random subdomain
-            new_org = db.organization.insert(
-                name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet, settings.nanoid_length))
-            # Relate user and organization
-            db.user_organization.insert(user=new_user, organization=new_org)
+            item.update_record(owner=the_user, two_step = code)
             db.commit()
     except Exception as error_ex:
         error_status = True
@@ -513,7 +591,46 @@ def validate(validation: Validation = Body(None, embed=True)):
         logger.exception(error_ex)
     return {
         "valid": valid_item,
+        "valid_email": valid_email,
         "token": validation.token,
+        "error": error,
+        "error_status": error_status
+    }
+    
+@app.post("/validate2")
+def validate2(code: str = Body(None, embed=True), token: str = Header("")):
+    error_status = False
+    error = ""
+    valid = False
+    try:
+        # retrieve token
+        item = db.access_token(token=token)
+        if not item:
+            raise RuntimeError(
+                "Token {} is not valid.".format(
+                    token
+                )
+            )
+        # TODO: Case where user has attempted too much or the token has expired
+        # validate code
+        if int(item.two_step) != int(code):
+            raise RuntimeError(
+                "Invalid validation code {} and {}".format(
+                    item.two_step,
+                    code
+                )
+            )
+        # Update access_token
+        item.update_record(valid_since=datetime.datetime.now())
+        db.commit()
+        valid = True
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {
+        "token": token,
+        "valid": valid,
         "error": error,
         "error_status": error_status
     }
