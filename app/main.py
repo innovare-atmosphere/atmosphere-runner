@@ -446,6 +446,10 @@ def my_tasks(token: str = Header("")):
                     token
                 )
             )
+        distinct = db.task.id
+        #bugfix when using sqlite
+        if 'sqlite' in settings.db_url:
+            distinct = True
         user = db((db.access_token.token == token) & (
             db.access_token.owner == db.user.id))._select(db.user.id, distinct=True)
         user_tokens = db(db.access_token.owner.belongs(user)
@@ -453,7 +457,7 @@ def my_tasks(token: str = Header("")):
         all_tasks = db((db.task.organization == db.organization.id) &
                        (db.organization.id == db.user_organization.organization) &
                        (db.user_organization.user == db.access_token.owner) &
-                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=db.task.id).as_list()
+                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=distinct).as_list()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
