@@ -453,7 +453,7 @@ def my_tasks(token: str = Header("")):
         all_tasks = db((db.task.organization == db.organization.id) &
                        (db.organization.id == db.user_organization.organization) &
                        (db.user_organization.user == db.access_token.owner) &
-                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=True).as_list()
+                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=db.task.id).as_list()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
