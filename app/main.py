@@ -512,7 +512,7 @@ def authorize():
                                    for i in range(captcha_size)])
         # TODO: store in local memory (should be REDIS and should expire)
         id = str(uuid.uuid4())
-        db.access_token.insert(token=id, owner=None, valid_since=None)
+        db.access_token.insert(token=id, owner=None, valid_since=None, created_at=datetime.datetime.now())
         db.commit()
         memory_tokens[id] = dict(text_validation=text_validation, valid=False)
         bytes_png = image.generate(text_validation)
