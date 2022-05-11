@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 subdomain_regex = re.compile("[0-9]*[a-z]+[a-z0-9]*")
 email_regex = re.compile("^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$")
 
+class TaskStatus():
+    completed: str = "COMPLETED"
+    destroyed: str = "DESTROYED"
+    loading: str = "LOADING"
+    deploy_error: str = "DEPLOY_ERROR"
+    destroy_error: str = "DESTROY_ERROR"
 
 class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
@@ -67,6 +73,7 @@ app.add_middleware(
 memory_tokens = dict()
 running_init_containers = dict()
 running_apply_containers = dict()
+running_destroy_containers = dict()
 
 
 def attach_subdomain(ip_address, domain):
@@ -115,6 +122,94 @@ def valid_token(token: str):
         return False
     return item.valid_since != None
 
+def terra_destroy(id: str):
+    output_destroy = ''
+    error_status = False
+    error = ''
+    try:
+        # Prepare task data
+        task = db.task(uuid=id)
+        output = task.output if task else None
+        if not output:
+            raise RuntimeError(
+                "UUID ({}) Task has no output.".format(id)
+            )
+        if not output.get("status") in [TaskStatus.completed, TaskStatus.deploy_error, TaskStatus.destroy_error]:
+            raise RuntimeError(
+                "UUID ({}) Task is not completed.".format(id)
+            )
+        output["status"] = TaskStatus.loading
+        task.update_record(output = output)
+        db.commit()
+        # Prepare terraform working directory
+        local_path = '/tmp'  # workaround of docker /var/run/docker.sock os.getcwd()
+        working_path = os.path.join(local_path, "workdir-{}".format(id))
+        if not os.path.exists(working_path):
+            raise RuntimeError(
+                "UUID ({}) workdir doesn't exist. Aborting.".format(id)
+            )
+        repo_path = os.path.join(working_path, task.flavor)
+        if not os.path.exists(repo_path):
+            raise RuntimeError(
+                "Couldn't find flavor ({}) for provider ({}). Aborting.".format(
+                    task.flavor,
+                    task.provider
+                )
+            )
+        varsfile = 'atmosphere.tfvars.json'
+        # Invoke terraform
+        client = docker.from_env()
+        stream_output_destroy = client.containers.run(
+            "hashicorp/terraform:latest",
+            "destroy -auto-approve -var-file=\"{}\"".format(varsfile),
+            volumes={
+                repo_path: {
+                    'bind': '/workspace',
+                    'mode': 'rw'
+                }
+            },
+            detach=True,
+            working_dir="/workspace"
+        )
+        running_destroy_containers[id] = stream_output_destroy
+        o1 = stream_output_destroy.wait()
+        output_destroy = stream_output_destroy.logs().decode("utf-8", "ignore")
+        #{'Error': None, 'StatusCode': 0}
+        if (o1['Error'] or o1['StatusCode'] != 0):
+            raise RuntimeError(
+                "Error found ({}) Status Code ({}).".format(
+                    o1['Error'],
+                    o1['StatusCode']
+                )
+            )
+        #TODO: free the domain name
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.error(f"Task {id} errored.")
+        logger.exception(error_ex)
+    finally:
+        # Catch output
+        try:
+            output_destroy = stream_output_destroy.logs().decode("utf-8", "ignore")
+        except:
+            pass
+        # Cleanup
+        try:
+            stream_output_destroy.remove()
+        except:
+            pass
+        try:
+            del running_destroy_containers[id]
+        except:
+            pass
+    # TODO: Pack everything and delete the working directory
+    output["output_destroy"] = output_destroy
+    output["error_destroy"] = error
+    output["status"] = TaskStatus.destroy_error if error_status else TaskStatus.destroyed
+    task.update_record(output = output)
+    db.commit()
+    return
 
 def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables: dict):
     output_init = ''
@@ -164,9 +259,8 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
                            output_init="",
                            output_apply="",
                            output_done="",
-                           error_status=False,
-                           error=None,
-                           completed=False
+                           status=TaskStatus.loading,
+                           error=None
                        ))
         db.commit()
         # Prepare terraform working directory
@@ -307,10 +401,9 @@ def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables
         output=dict(
             output_init=output_init,
             output_apply=output_apply,
-            error_status=error_status,
             output_done=output_done,
-            error=error,
-            completed=True
+            error_deploy=error,
+            status=TaskStatus.deploy_error if error_status else TaskStatus.completed
         )
     )
     db.commit()
@@ -402,13 +495,31 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
         logger.exception(error_ex)
     return {"uuid": id, "error_status": error_status, "error": error}
 
+@app.post("/destroy/{task_uuid}")
+async def destroy(background_tasks: BackgroundTasks, task_uuid:str , token: str = Header("")):
+    error_status = False
+    error = None
+    id = None
+    try:
+        if not valid_token(token):
+            raise RuntimeError(
+                "Token {} is not valid.".format(
+                    token
+                )
+            )
+        background_tasks.add_task(
+            terra_destroy, task_uuid)
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {"uuid": task_uuid, "error_status": error_status, "error": error}
 
 @app.get("/state/{task_uuid}")
 def task_state(task_uuid: str, token: str = Header("")):
     error_status = False
     error = None
-    status = None
-    reported_ip_address = None
+    output = None
     try:
         if not valid_token(token):
             raise RuntimeError(
@@ -418,20 +529,24 @@ def task_state(task_uuid: str, token: str = Header("")):
             )
         # TODO: Validate when token is valid but requested task doesnt belong to token/organization
         task_info = db.task(uuid=task_uuid)
-        status = task_info.output if task_info else None
+        output = task_info.output if task_info else None
+        print(output.get("status"))
         #print(type(status))
-        if status and not status["completed"]:
+        if output and output.get("status") == TaskStatus.loading:
             if running_init_containers.get(task_uuid):
-                status["output_init"] = running_init_containers.get(
+                output["output_init"] = running_init_containers.get(
                     task_uuid).logs()
             if running_apply_containers.get(task_uuid):
-                status["output_apply"] = running_apply_containers.get(
+                output["output_apply"] = running_apply_containers.get(
+                    task_uuid).logs()
+            if running_destroy_containers.get(task_uuid):
+                output["output_destroy"] = running_destroy_containers.get(
                     task_uuid).logs()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
-    return {"uuid": task_uuid, "status": status, "error_status": error_status, "error": error, "reported_ip_address": reported_ip_address}
+    return {"uuid": task_uuid, "output": output, "error_status": error_status, "error": error}
 
 
 @app.get("/my-tasks")
@@ -697,5 +812,33 @@ def providers_list():
         )
     return {
         "providers": providers_output,
+        "error_status": False
+    }
+    
+@app.get("/migrate")
+async def migrate():
+    all_tasks = db(db.task.id>0).select()
+    for task in all_tasks:
+        if (type(task.output) == type(dict())):
+            if task.output.get("error"):
+                task.output["error_deploy"] = task.output.get("error")
+                del task.output["error"]
+            if task.output.get("error_status") == True:
+                del task.output["error_status"]
+                del task.output["completed"]
+                task.output["status"] = TaskStatus.deploy_error
+            elif task.output.get("completed") == True:
+                del task.output["error_status"]
+                del task.output["completed"]
+                task.output["status"] = TaskStatus.completed
+            elif task.output.get("completed") == False:
+                del task.output["error_status"]
+                del task.output["completed"]
+                task.output["status"] = TaskStatus.loading
+            task.update_record(output = task.output)
+    db.commit()
+    return {
+        "finished": True,
+        "error": "",
         "error_status": False
     }
