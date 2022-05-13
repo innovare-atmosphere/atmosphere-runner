@@ -23,10 +23,12 @@ import re
 import requests
 import time
 import random
+import hashlib
 
 logger = logging.getLogger(__name__)
 subdomain_regex = re.compile("[0-9]*[a-z]+[a-z0-9]*")
 email_regex = re.compile("^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$")
+
 
 class TaskStatus():
     completed: str = "COMPLETED"
@@ -34,6 +36,7 @@ class TaskStatus():
     loading: str = "LOADING"
     deploy_error: str = "DEPLOY_ERROR"
     destroy_error: str = "DESTROY_ERROR"
+
 
 class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
@@ -49,6 +52,7 @@ class Settings(BaseSettings):
     mail_port: str = ""
     mail_server: str = ""
     mail_from_name: str = ""
+
     class Config:
         env_file = ".env"
 
@@ -88,7 +92,7 @@ def attach_subdomain(ip_address, domain):
     }
     response = requests.request(
         "POST", url, data=json.dumps(payload), headers=headers)
-    #print(response.status_code)
+    # print(response.status_code)
     if not (response.status_code in [200, 201, 202, 203, 204, 205, 206]):
         raise RuntimeError(
             Template(f"Error attaching subdomain ($subdomain) for $domain to ip $ip_address. [{response.text}] Aborting.").substitute(
@@ -122,6 +126,7 @@ def valid_token(token: str):
         return False
     return item.valid_since != None
 
+
 def terra_destroy(id: str):
     output_destroy = ''
     error_status = False
@@ -139,7 +144,7 @@ def terra_destroy(id: str):
                 "UUID ({}) Task is not completed.".format(id)
             )
         output["status"] = TaskStatus.loading
-        task.update_record(output = output)
+        task.update_record(output=output)
         db.commit()
         # Prepare terraform working directory
         local_path = '/tmp'  # workaround of docker /var/run/docker.sock os.getcwd()
@@ -182,7 +187,7 @@ def terra_destroy(id: str):
                     o1['StatusCode']
                 )
             )
-        #TODO: free the domain name
+        # TODO: free the domain name
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
@@ -207,9 +212,10 @@ def terra_destroy(id: str):
     output["output_destroy"] = output_destroy
     output["error_destroy"] = error
     output["status"] = TaskStatus.destroy_error if error_status else TaskStatus.destroyed
-    task.update_record(output = output)
+    task.update_record(output=output)
     db.commit()
     return
+
 
 def terra_invoke(id: str, user_token: str, provider: str, flavor: str, variables: dict):
     output_init = ''
@@ -495,8 +501,9 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
         logger.exception(error_ex)
     return {"uuid": id, "error_status": error_status, "error": error}
 
+
 @app.post("/destroy/{task_uuid}")
-async def destroy(background_tasks: BackgroundTasks, task_uuid:str , token: str = Header("")):
+async def destroy(background_tasks: BackgroundTasks, task_uuid: str, token: str = Header("")):
     error_status = False
     error = None
     id = None
@@ -515,6 +522,7 @@ async def destroy(background_tasks: BackgroundTasks, task_uuid:str , token: str 
         logger.exception(error_ex)
     return {"uuid": task_uuid, "error_status": error_status, "error": error}
 
+
 @app.get("/state/{task_uuid}")
 def task_state(task_uuid: str, token: str = Header("")):
     error_status = False
@@ -531,7 +539,7 @@ def task_state(task_uuid: str, token: str = Header("")):
         task_info = db.task(uuid=task_uuid)
         output = task_info.output if task_info else None
         print(output.get("status"))
-        #print(type(status))
+        # print(type(status))
         if output and output.get("status") == TaskStatus.loading:
             if running_init_containers.get(task_uuid):
                 output["output_init"] = running_init_containers.get(
@@ -549,8 +557,8 @@ def task_state(task_uuid: str, token: str = Header("")):
     return {"uuid": task_uuid, "output": output, "error_status": error_status, "error": error}
 
 
-@app.get("/my-tasks")
-def my_tasks(token: str = Header("")):
+@app.get("/my-account")
+def my_account(token: str = Header("")):
     error_status = False
     error = None
     all_tasks = None
@@ -562,7 +570,7 @@ def my_tasks(token: str = Header("")):
                 )
             )
         distinct = db.task.id
-        #bugfix when using sqlite
+        # bugfix when using sqlite
         if 'sqlite' in settings.db_url:
             distinct = True
         user = db((db.access_token.token == token) & (
@@ -572,12 +580,19 @@ def my_tasks(token: str = Header("")):
         all_tasks = db((db.task.organization == db.organization.id) &
                        (db.organization.id == db.user_organization.organization) &
                        (db.user_organization.user == db.access_token.owner) &
-                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, orderby=~db.task.id, distinct=distinct).as_list()
+                       (db.access_token.token.belongs(user_tokens))).select(db.task.ALL, db.organization.ALL, orderby=~db.task.id, distinct=distinct).as_list()
+        user_data = db.user(db.user.id.belongs(user)).as_dict()
+        user_data["md5"] = hashlib.md5(user_data["email"].encode()).hexdigest()
+        del user_data['id']
+        del user_data['password_hash']
+        user_organizations = db((db.user_organization.user.belongs(user)) &
+                                (db.organization.id == db.user_organization.organization)).select(db.organization.ALL).as_list()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
-    return {"all_tasks": all_tasks, "error": error, "error_status": error_status}
+    return {"all_tasks": all_tasks, "error": error, "error_status": error_status, "user": user_data, "organizations": user_organizations}
+
 
 class PaymentInformation(BaseModel):
     card_number: str
@@ -585,14 +600,15 @@ class PaymentInformation(BaseModel):
     cvv: str
     exp_date: str
     type: str
-    
+
 
 class PaymentDetails(BaseModel):
     method: str
     information: Optional[PaymentInformation] = None
 
+
 @app.post("/pay")
-def my_tasks(details: PaymentDetails = Body(None, embed = True), token: str = Header("")):
+def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Header("")):
     error_status = False
     error = None
     success = False
@@ -604,15 +620,16 @@ def my_tasks(details: PaymentDetails = Body(None, embed = True), token: str = He
                 )
             )
         #print("Simulating payment with the following method:")
-        #print(details.method)
+        # print(details.method)
         #print("The information for the payment is as follows:")
-        #print(details.information)
-        success = True #random.choice([True, False])
+        # print(details.information)
+        success = True  # random.choice([True, False])
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
     return {"success": success, "error": error, "error_status": error_status}
+
 
 @app.get("/token")
 def authorize():
@@ -627,7 +644,8 @@ def authorize():
                                    for i in range(captcha_size)])
         # TODO: store in local memory (should be REDIS and should expire)
         id = str(uuid.uuid4())
-        db.access_token.insert(token=id, owner=None, valid_since=None, created_at=datetime.datetime.now())
+        db.access_token.insert(
+            token=id, owner=None, valid_since=None, created_at=datetime.datetime.now())
         db.commit()
         memory_tokens[id] = dict(text_validation=text_validation, valid=False)
         bytes_png = image.generate(text_validation)
@@ -651,7 +669,7 @@ async def validate(email: str = Body(None, embed=True), validation: Validation =
     valid_item = False
     valid_email = False
     try:
-        #validate email
+        # validate email
         valid_email = re.search(email_regex, email) is not None
         if not valid_email:
             raise RuntimeError(
@@ -671,23 +689,24 @@ async def validate(email: str = Body(None, embed=True), validation: Validation =
         valid_item = (memory_token.get("text_validation") == validation.proof)
         if valid_item:
             # Create user (or find it)
-            the_user = db.user(email = email)
+            the_user = db.user(email=email)
             if not the_user:
                 the_user = db.user.insert(email=email, password_hash=None)
                 # Create default organization and random subdomain
                 new_org = db.organization.insert(
                     name='My organization', subdomain=nanoid.generate(settings.nanoid_alphabet, settings.nanoid_length))
                 # Relate user and organization
-                db.user_organization.insert(user=the_user, organization=new_org)
+                db.user_organization.insert(
+                    user=the_user, organization=new_org)
             # Send e-mail with code
             code = randint(100000, 999999)
             message = MessageSchema(
                 subject="Login code to Atmosphere",
                 recipients=[email],
-                template_body=dict(body = dict(email=email, code=str(code))),
+                template_body=dict(body=dict(email=email, code=str(code))),
                 subtype='html',
             )
-            #print(settings)
+            # print(settings)
             fm = FastMail(ConnectionConfig(
                 MAIL_USERNAME=settings.mail_username,
                 MAIL_PASSWORD=settings.mail_password,
@@ -702,7 +721,7 @@ async def validate(email: str = Body(None, embed=True), validation: Validation =
             ))
             await fm.send_message(message, template_name='email.html')
             # Update access_token
-            item.update_record(owner=the_user, two_step = code)
+            item.update_record(owner=the_user, two_step=code)
             db.commit()
     except Exception as error_ex:
         error_status = True
@@ -715,7 +734,8 @@ async def validate(email: str = Body(None, embed=True), validation: Validation =
         "error": error,
         "error_status": error_status
     }
-    
+
+
 @app.post("/validate2")
 def validate2(code: str = Body(None, embed=True), token: str = Header("")):
     error_status = False
@@ -754,10 +774,11 @@ def validate2(code: str = Body(None, embed=True), token: str = Header("")):
         "error_status": error_status
     }
 
+
 @app.get("/flavors/{provider_name}")
 def flavor_data(provider_name: str):
     flavor_details = db(
-        (db.provider.name == provider_name)&
+        (db.provider.name == provider_name) &
         (db.flavor.provider == db.provider.id)
     ).select()
     if not flavor_details:
@@ -771,13 +792,13 @@ def flavor_data(provider_name: str):
     for detail in flavor_details:
         pricing.append(
             dict(
-                flavor = detail.flavor.name,
-                installation = dict(
-                    normal = detail.flavor.installation_pricing_normal,
-                    discounted = detail.flavor.installation_pricing_discounted
+                flavor=detail.flavor.name,
+                installation=dict(
+                    normal=detail.flavor.installation_pricing_normal,
+                    discounted=detail.flavor.installation_pricing_discounted
                 ),
-                monthly = detail.flavor.monthly,
-                payment_required = detail.flavor.payment_required or False
+                monthly=detail.flavor.monthly,
+                payment_required=detail.flavor.payment_required or False
             )
         )
     return {
@@ -790,11 +811,12 @@ def flavor_data(provider_name: str):
         "pricing": pricing,
         "error_status": False
     }
-    
+
+
 @app.get("/providers")
 def providers_list():
     providers = db(
-        (db.provider.id >= 0)    
+        (db.provider.id >= 0)
     ).select()
     if not providers:
         providers = []
@@ -814,10 +836,11 @@ def providers_list():
         "providers": providers_output,
         "error_status": False
     }
-    
+
+
 @app.get("/migrate")
 async def migrate():
-    all_tasks = db(db.task.id>0).select()
+    all_tasks = db(db.task.id > 0).select()
     for task in all_tasks:
         if (type(task.output) == type(dict())):
             if task.output.get("error"):
@@ -835,7 +858,7 @@ async def migrate():
                 del task.output["error_status"]
                 del task.output["completed"]
                 task.output["status"] = TaskStatus.loading
-            task.update_record(output = task.output)
+            task.update_record(output=task.output)
     db.commit()
     return {
         "finished": True,
