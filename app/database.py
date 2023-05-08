@@ -42,7 +42,18 @@ def Database(uri):
     db.define_table(
         'organization',
         Field('name', 'string'),
+        Field('balance', 'float'),
         Field('subdomain', 'string', distinct = True),
+    )
+
+    db.define_table(
+        'payment_history',
+        Field('when', 'datetime', default = datetime.datetime.now()),
+        Field('token', 'string'),
+        Field('payment_validation_token', 'string'),
+        Field('amount', 'float'),
+        Field('status', 'string'),
+        Field('organization', 'references organization'),
     )
 
     db.define_table(

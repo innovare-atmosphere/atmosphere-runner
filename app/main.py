@@ -1,5 +1,6 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, BackgroundTasks, Header, Body
+from fastapi.responses import RedirectResponse
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import BaseModel, BaseSettings
 from typing import Optional
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 subdomain_regex = re.compile("[0-9]*[a-z]+[a-z0-9]*")
 email_regex = re.compile("^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$")
 
+class PaymentStatus():
+    invoked: str = "INVOKED"
+    completed: str = "COMPLETED"
 
 class TaskStatus():
     completed: str = "COMPLETED"
@@ -812,6 +816,183 @@ def flavor_data(provider_name: str):
         "error_status": False
     }
 
+@app.post("/webhook-payment/")
+def webhook_payment(event: dict):
+    r = valid_payment(event.get("resource").get("token"), event.get("resource").get("ern"))
+    if r is RedirectResponse:
+        return {
+            "error_status": False
+        }
+    else:
+        return r
+
+@app.get("/valid_payment/{pay_token}/{ern}")
+def valid_payment(pay_token: str, ern: str):
+    error_status = False
+    error = None
+    try:
+        #Get the payment
+        check_payment = db(
+            (db.payment_history.payment_validation_token == pay_token) &
+            (db.payment_history.id == ern)
+        ).select(
+            db.payment_history.ALL,
+            orderby=db.payment_history.id,
+            limitby=(0, 1),
+            distinct=True
+        )
+        if not check_payment:
+            raise RuntimeError(
+                    Template(
+                        "Payment identified by ern ($ern) has no token {$token} or status is not {$status}. Failed validation.").substitute(
+                        ern = ern,
+                        token = pay_token,
+                        status = PaymentStatus.invoked
+                    )
+                )
+        pay_info = check_payment.first()
+        #Ignore when payment already applied
+        if pay_info.status == PaymentStatus.completed:
+            return RedirectResponse("http://localhost:3000/my-account")
+        amount = pay_info.amount
+        #Update the payment as valid
+        db.payment_history.update_or_insert(
+            ((db.payment_history.payment_validation_token == pay_token) &
+            (db.payment_history.id == ern) &
+            (db.payment_history.status == PaymentStatus.invoked)),
+            status = PaymentStatus.completed
+        )
+        #Update the balance
+        org = db.organization(id = pay_info.organization)
+        db((db.organization.id == pay_info.organization)).update(
+            balance = (org.balance if org.balance is not None else 0) + amount
+        )
+        #Commit changes
+        db.commit()
+        #redirect user
+        return RedirectResponse("http://localhost:3000/my-account")
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {
+        "error_status": error_status,
+        "error": error
+    }
+
+
+@app.get("/payment/{total}")
+def payment(total: float, token: str = Header("")):
+    error_status = False
+    error = ""
+    redirect_url = ""
+    try:
+        if not total>0:
+            raise RuntimeError(
+                "Total to pay must be positive, received: {total}.".format(
+                    token
+                )
+            )
+        if not valid_token(token):
+            raise RuntimeError(
+                "Token {} is not valid.".format(
+                    token
+                )
+            )
+        organization = ''
+        found_organization = db(
+            (db.access_token.token == token) &
+            (db.access_token.owner == db.user_organization.user) &
+            (db.organization.id == db.user_organization.organization)
+        ).select(
+            db.organization.ALL,
+            orderby=db.organization.id,
+            limitby=(0, 1),
+            distinct=True
+        )
+        if not found_organization:
+            raise RuntimeError(
+                Template("User identified by token ($user_token) has no organization. Aborting.").substitute(
+                    user_token=user_token)
+            )
+        organization = found_organization.first()
+        db.commit()
+        #Call on connect (get the pagadito token)
+        import http.client
+        import urllib.parse
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation = "f3f191ce3326905ff4403bb05b0de150",
+            uid = "8e8712534becd984184b447497b6aed1",
+            wsk = "e367e770853f3887e6dd99b7ea625a0b",
+            format_return = "json"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata = json.loads(data)
+        if not jdata.get("code") == "PG1001":
+            raise RuntimeError(
+                "Calling Pagadito API connect error: {} message: {}.".format(
+                    jdata.get("code"),
+                    jdata.get("message")
+                )
+            )
+        pagadito_token = jdata.get("value")
+        #Create a "invoked" payment
+        payment_id = db.payment_history.insert(
+            token=token,
+            payment_validation_token = pagadito_token,
+            amount=total,
+            status=PaymentStatus.invoked,
+            organization=organization.id
+        )
+        #After that, call to create the url
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation="41216f8caf94aaa598db137e36d4673e",
+            token=pagadito_token,
+            ern=payment_id,
+            amount=total,
+            details=json.dumps(
+                [
+                dict(
+                    quantity = 1,
+                    description = "Atmosphere credits for US{}".format(total),
+                    price = total,
+                    url_product = "",
+                )
+                ]
+            ),
+            format_return = "json",
+            currency = "USD"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata2 = json.loads(data)
+        if not jdata2.get("code") == "PG1002":
+            raise RuntimeError(
+                "Error Calling Pagadito API create url payment error: {} message: {}.".format(
+                    jdata2.get("code"),
+                    jdata2.get("message")
+                )
+            )
+        redirect_url = jdata2.get("value")
+        #Capture the url
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {
+        "redirect_url": redirect_url,
+        "error": error,
+        "error_status": error_status
+    }
 
 @app.get("/providers")
 def providers_list():
