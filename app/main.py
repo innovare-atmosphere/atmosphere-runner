@@ -819,6 +819,7 @@ def flavor_data(provider_name: str):
 @app.post("/webhook-payment/")
 async def webhook_payment(request: Request):
     event = await request.json()
+    logger.exception(event)
     r = valid_payment(
         event.get("resource").get("token"),
         event.get("resource").get("ern"),
