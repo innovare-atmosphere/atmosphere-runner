@@ -819,7 +819,10 @@ def flavor_data(provider_name: str):
 @app.post("/webhook-payment/")
 async def webhook_payment(request: Request):
     event = await request.json()
-    r = valid_payment(event.get("resource").get("token"), event.get("resource").get("ern"))
+    r = valid_payment(
+        event.get("resource").get("token"),
+        event.get("resource").get("ern"),
+        True)
     if r is RedirectResponse:
         return {
             "error_status": False
@@ -828,7 +831,7 @@ async def webhook_payment(request: Request):
         return r
 
 @app.get("/valid_payment/{pay_token}/{ern}")
-def valid_payment(pay_token: str, ern: str):
+def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
     error_status = False
     error = None
     try:
@@ -854,6 +857,11 @@ def valid_payment(pay_token: str, ern: str):
         pay_info = check_payment.first()
         #Ignore when payment already applied
         if pay_info.status == PaymentStatus.completed:
+            if no_redirect:
+                return {
+                    "error_status": error_status,
+                    "error": error
+                }
             return RedirectResponse("{}/my-account".format(
                 settings.frontend_url
             ))
@@ -873,6 +881,11 @@ def valid_payment(pay_token: str, ern: str):
         #Commit changes
         db.commit()
         #redirect user
+        if no_redirect:
+            return {
+                "error_status": error_status,
+                "error": error
+            }
         return RedirectResponse("{}/my-account".format(
             settings.frontend_url
         ))
