@@ -1,5 +1,5 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, BackgroundTasks, Header, Body
+from fastapi import FastAPI, BackgroundTasks, Header, Body, Request
 from fastapi.responses import RedirectResponse
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from pydantic import BaseModel, BaseSettings
@@ -817,7 +817,8 @@ def flavor_data(provider_name: str):
     }
 
 @app.post("/webhook-payment/")
-def webhook_payment(event: dict):
+async def webhook_payment(request: Request):
+    event = await request.json()
     r = valid_payment(event.get("resource").get("token"), event.get("resource").get("ern"))
     if r is RedirectResponse:
         return {
