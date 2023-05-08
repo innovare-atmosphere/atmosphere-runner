@@ -818,18 +818,33 @@ def flavor_data(provider_name: str):
 
 @app.post("/webhook-payment/")
 async def webhook_payment(request: Request):
-    event = await request.json()
-    logger.exception(event)
-    r = valid_payment(
-        event.get("resource").get("token"),
-        event.get("resource").get("ern"),
-        True)
-    if r is RedirectResponse:
-        return {
-            "error_status": False
-        }
-    else:
+    error_status = False
+    error = None
+    try:
+        event = await request.json()
+        event_status = event.get("status")
+        if not(event_status == "COMPLETED"):
+            raise RuntimeError(
+                Template(
+                    "Ignoring webhook payment {ern} and token {token}, because event status is {status}.").substitute(
+                    ern = event.get("resource").get("ern"),
+                    token = event.get("resource").get("token"),
+                    status = event_status
+                )
+            )
+        r = valid_payment(
+            event.get("resource").get("token"),
+            event.get("resource").get("ern"),
+            True)
         return r
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {
+        "error_status": error_status,
+        "error": error
+    }
 
 @app.get("/valid_payment/{pay_token}/{ern}")
 def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
