@@ -853,7 +853,9 @@ def valid_payment(pay_token: str, ern: str):
         pay_info = check_payment.first()
         #Ignore when payment already applied
         if pay_info.status == PaymentStatus.completed:
-            return RedirectResponse("http://localhost:3000/my-account")
+            return RedirectResponse("{}/my-account".format(
+                settings.frontend_url
+            ))
         amount = pay_info.amount
         #Update the payment as valid
         db.payment_history.update_or_insert(
@@ -870,7 +872,9 @@ def valid_payment(pay_token: str, ern: str):
         #Commit changes
         db.commit()
         #redirect user
-        return RedirectResponse("http://localhost:3000/my-account")
+        return RedirectResponse("{}/my-account".format(
+            settings.frontend_url
+        ))
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
