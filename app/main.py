@@ -822,7 +822,7 @@ async def webhook_payment(request: Request):
     error = None
     try:
         event = await request.json()
-        event_status = event.get("status")
+        event_status = event.get("resource").get("status")
         if not(event_status == "COMPLETED"):
             raise RuntimeError(
                 Template(
