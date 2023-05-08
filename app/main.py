@@ -826,7 +826,7 @@ async def webhook_payment(request: Request):
         if not(event_status == "COMPLETED"):
             raise RuntimeError(
                 Template(
-                    "Ignoring webhook payment {ern} and token {token}, because event status is {status}.").substitute(
+                    "Ignoring webhook payment {$ern} and token {$token}, because event status is {$status}.").substitute(
                     ern = event.get("resource").get("ern"),
                     token = event.get("resource").get("token"),
                     status = event_status
