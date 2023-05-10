@@ -485,7 +485,7 @@ def variables(provider: str, flavor: str, token: str = Header("")):
 
 
 @app.post("/invoke/{provider}/{flavor}")
-async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, variables: dict, token: str = Header("")):
+async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, puuid: str, variables: dict, token: str = Header("")):
     error_status = False
     error = None
     id = None
@@ -496,7 +496,32 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
                     token
                 )
             )
+        #Generate the task uuid
         id = str(uuid.uuid4())
+        #Payment processing using the puuid
+        phistory = db((db.payment_history.token == token)&
+           (db.payment_history.payment_validation_token == puuid)).select(
+            db.payment_history.ALL,
+            orderby=db.payment_history.id,
+            limitby=(0, 1),
+            distinct=True
+           )
+        if not phistory:
+            raise RuntimeError(
+                Template("Couldn't process payment id ($puuid) with current token ($token). Aborting.").substitute(
+                    puuid = puuid,
+                    token = token)
+            )
+        payment_history = phistory.first()
+        payment_history.update_record(
+            status = PaymentStatus.completed,
+            what = id
+        )
+        org = db.organization(id = payment_history.organization)
+        db((db.organization.id == pay_info.organization)).update(
+            balance = (org.balance if org.balance is not None else 0) + payment_history.amount
+        )
+        db.commit()
         background_tasks.add_task(
             terra_invoke, id, token, provider, flavor, variables)
     except Exception as error_ex:
@@ -599,15 +624,17 @@ def my_account(token: str = Header("")):
 
 
 class PaymentInformation(BaseModel):
-    card_number: str
-    cardholder: str
-    cvv: str
-    exp_date: str
+    card_number: Optional[str] = None
+    cardholder: Optional[str] = None
+    cvv: Optional[str] = None
+    exp_date: Optional[str] = None
     type: str
 
 
 class PaymentDetails(BaseModel):
     method: str
+    provider: str
+    flavor: str
     information: Optional[PaymentInformation] = None
 
 
@@ -616,6 +643,7 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
     error_status = False
     error = None
     success = False
+    puuid = None
     try:
         if not valid_token(token):
             raise RuntimeError(
@@ -623,16 +651,52 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
                     token
                 )
             )
-        #print("Simulating payment with the following method:")
-        # print(details.method)
-        #print("The information for the payment is as follows:")
-        # print(details.information)
-        success = True  # random.choice([True, False])
+        organization = ''
+        found_organization = db(
+            (db.access_token.token == token) &
+            (db.access_token.owner == db.user_organization.user) &
+            (db.organization.id == db.user_organization.organization)
+        ).select(
+            db.organization.ALL,
+            orderby=db.organization.id,
+            limitby=(0, 1),
+            distinct=True
+        )
+        if not found_organization:
+            raise RuntimeError(
+                Template("User identified by token ($user_token) has no organization. Aborting.").substitute(
+                    user_token=user_token)
+            )
+        organization = found_organization.first()
+        if details.information.type == 'balance':
+            success = True
+            puuid = str(uuid.uuid4())
+            #TODO: get the total to charge the user
+            total = 10
+            payment_id = db.payment_history.insert(
+                token=token,
+                payment_validation_token = puuid,
+                amount=-total,
+                status=PaymentStatus.invoked,
+                organization=organization.id
+            )
+        if details.information.type == "24hours":
+            success = True  # random.choice([True, False])
+            puuid = str(uuid.uuid4())
+            #TODO: get the total to charge the user
+            total = 10
+            payment_id = db.payment_history.insert(
+                token=token,
+                payment_validation_token = puuid,
+                amount=-total,
+                status=PaymentStatus.invoked,
+                organization=organization.id
+            )
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
-    return {"success": success, "error": error, "error_status": error_status}
+    return {"success": success, "error": error, "error_status": error_status, "puuid": puuid}
 
 
 @app.get("/token")

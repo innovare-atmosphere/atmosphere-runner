@@ -49,6 +49,7 @@ def Database(uri):
     db.define_table(
         'payment_history',
         Field('when', 'datetime', default = datetime.datetime.now()),
+        Field('what', 'string'),
         Field('token', 'string'),
         Field('payment_validation_token', 'string'),
         Field('amount', 'float'),
