@@ -679,11 +679,12 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
             flavor_dataset = db(
                 (db.provider.name == details.provider)&
                 (db.flavor.provider == db.provider.id)&
-                (db.flavor.name == details.flavor)&
+                (db.flavor.name == details.flavor)
             ).select(
                 db.flavor.ALL,
                 orderby=db.flavor.id,
-                limitby=(0,1), distinct=True
+                limitby=(0,1), 
+                distinct=True
             )
             if not flavor_dataset:
                 raise RuntimeError(
