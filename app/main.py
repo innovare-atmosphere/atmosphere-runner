@@ -468,6 +468,8 @@ def variables(provider: str, flavor: str, token: str = Header("")):
             working_dir="/workspace"
         )
         output = json.loads(output)
+        if flavor == "atmosphere":
+            del output["variables"]["do_token"]
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
@@ -484,7 +486,7 @@ def variables(provider: str, flavor: str, token: str = Header("")):
     )
 
 
-@app.post("/invoke/{provider}/{flavor}")
+@app.post("/invoke/{provider}/{flavor}/{puuid}")
 async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, puuid: str, variables: dict, token: str = Header("")):
     error_status = False
     error = None
@@ -496,6 +498,8 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
                     token
                 )
             )
+        if flavor == "atmosphere":
+            variables["do_token"] = settings.do_key
         #Generate the task uuid
         id = str(uuid.uuid4())
         #Payment processing using the puuid
@@ -518,7 +522,7 @@ async def invoke(background_tasks: BackgroundTasks, provider: str, flavor: str, 
             what = id
         )
         org = db.organization(id = payment_history.organization)
-        db((db.organization.id == pay_info.organization)).update(
+        db((db.organization.id == org.id)).update(
             balance = (org.balance if org.balance is not None else 0) + payment_history.amount
         )
         db.commit()
@@ -671,8 +675,24 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
         if details.information.type == 'balance':
             success = True
             puuid = str(uuid.uuid4())
-            #TODO: get the total to charge the user
-            total = 10
+            #get the total to charge the user
+            flavor_dataset = db(
+                (db.provider.name == details.provider)&
+                (db.flavor.provider == db.provider.id)&
+                (db.flavor.name == details.flavor)&
+            ).select(
+                db.flavor.ALL,
+                orderby=db.flavor.id,
+                limitby=(0,1), distinct=True
+            )
+            if not flavor_dataset:
+                raise RuntimeError(
+                Template("Total payment can't be found using flavor ($flavor) and provider ($provider). Aborting.").substitute(
+                    provider = details.provider,
+                    flavor = details.flavor)
+                )
+            flavor_item = flavor_dataset.first()
+            total = 0 if (flavor_item.payment_required=='F') else (flavor_item.monthly + flavor_item.installation_pricing_discounted)
             payment_id = db.payment_history.insert(
                 token=token,
                 payment_validation_token = puuid,
@@ -692,6 +712,7 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
                 status=PaymentStatus.invoked,
                 organization=organization.id
             )
+        db.commit()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
