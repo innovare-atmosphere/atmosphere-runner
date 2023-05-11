@@ -932,6 +932,50 @@ async def webhook_payment(request: Request):
         "error": error
     }
 
+@app.get("/check-payment/{pay_token}/{ern}")
+def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: str = Header("")):
+    error_status = False
+    error = None
+    status = None
+    amount = None
+    try:
+        #Get the payment
+        check_payment = db(
+            (db.payment_history.payment_validation_token == pay_token) &
+            (db.payment_history.id == ern) &
+            (db.payment_history.token == token)
+        ).select(
+            db.payment_history.ALL,
+            orderby=db.payment_history.id,
+            limitby=(0, 1),
+            distinct=True
+        )
+        if not check_payment:
+            raise RuntimeError(
+                    Template(
+                        "Payment identified by ern ($ern) has no token {$pay_token} or status is not {$status} or doesn't belong to the user with token {$token}. Failed validation.").substitute(
+                        ern = ern,
+                        pay_token = pay_token,
+                        status = PaymentStatus.invoked,
+                        token = token
+                    )
+                )
+        cp = check_payment.first()
+        status = cp.status
+        amount = cp.amount
+    except Exception as error_ex:
+        error_status = True
+        error = str(error_ex)
+        logger.exception(error_ex)
+    return {
+        "ern": ern,
+        "pay_token": pay_token,
+        "status": status,
+        "amount": amount,
+        "error_status": error_status,
+        "error": error
+    }
+
 @app.get("/valid_payment/{pay_token}/{ern}")
 def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
     error_status = False
@@ -964,8 +1008,10 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                     "error_status": error_status,
                     "error": error
                 }
-            return RedirectResponse("{}/my-account".format(
-                settings.frontend_url
+            return RedirectResponse("{}/my-account/{}/{}".format(
+                settings.frontend_url,
+                pay_token,
+                ern
             ))
         amount = pay_info.amount
         #Update the payment as valid
@@ -982,23 +1028,52 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         )
         #Commit changes
         db.commit()
+        #send payment confirmation email
+        user = db.user(id = db.access_token(token = db.check_payment.token).owner)
+        message = MessageSchema(
+            subject="Atmosphere payment receipt No.{}".format(ern),
+            recipients=[user.email],
+            template_body=dict(body=dict(pay_token=pay_token, ern=ern, amount = amount)),
+            subtype='html',
+        )
+        fm = FastMail(ConnectionConfig(
+            MAIL_USERNAME=settings.mail_username,
+            MAIL_PASSWORD=settings.mail_password,
+            MAIL_FROM=settings.mail_from,
+            MAIL_PORT=settings.mail_port,
+            MAIL_SERVER=settings.mail_server,
+            MAIL_FROM_NAME=settings.mail_from_name,
+            MAIL_TLS=False,
+            MAIL_SSL=True,
+            USE_CREDENTIALS=True,
+            TEMPLATE_FOLDER='./templates/email'
+        ))
+        fm.send_message(message, template_name='email_receipt.html')
         #redirect user
         if no_redirect:
             return {
                 "error_status": error_status,
                 "error": error
             }
-        return RedirectResponse("{}/my-account".format(
-            settings.frontend_url
+        return RedirectResponse("{}/my-account/{}/{}".format(
+            settings.frontend_url,
+            pay_token,
+            ern
         ))
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
         logger.exception(error_ex)
-    return {
-        "error_status": error_status,
-        "error": error
-    }
+    if no_redirect:
+        return {
+            "error_status": error_status,
+            "error": error
+        }
+    return RedirectResponse("{}/my-account/{}/{}".format(
+        settings.frontend_url,
+        pay_token,
+        ern
+    ))
 
 
 @app.get("/payment/{total}")
@@ -1080,7 +1155,7 @@ def payment(total: float, token: str = Header("")):
                 [
                 dict(
                     quantity = 1,
-                    description = "Atmosphere credits for US{}".format(total),
+                    description = "Atmosphere funds for US$ {}".format(total),
                     price = total,
                     url_product = "",
                 )
