@@ -1008,7 +1008,7 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                     "error_status": error_status,
                     "error": error
                 }
-            return RedirectResponse("{}/my-account/{}/{}".format(
+            return RedirectResponse("{}/pay-completed/{}/{}".format(
                 settings.frontend_url,
                 pay_token,
                 ern
@@ -1055,7 +1055,7 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                 "error_status": error_status,
                 "error": error
             }
-        return RedirectResponse("{}/my-account/{}/{}".format(
+        return RedirectResponse("{}/pay-completed/{}/{}".format(
             settings.frontend_url,
             pay_token,
             ern
@@ -1069,7 +1069,7 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
             "error_status": error_status,
             "error": error
         }
-    return RedirectResponse("{}/my-account/{}/{}".format(
+    return RedirectResponse("{}/pay-completed/{}/{}".format(
         settings.frontend_url,
         pay_token,
         ern
