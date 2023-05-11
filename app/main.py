@@ -673,7 +673,6 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
             )
         organization = found_organization.first()
         if details.information.type == 'balance':
-            success = True
             puuid = str(uuid.uuid4())
             #get the total to charge the user
             flavor_dataset = db(
@@ -693,16 +692,16 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
                     flavor = details.flavor)
                 )
             flavor_item = flavor_dataset.first()
-            total = 0 if (flavor_item.payment_required=='F') else (flavor_item.monthly + flavor_item.installation_pricing_discounted)
+            total = 0 if (flavor_item.payment_required=='F') else (float(flavor_item.monthly) + float(flavor_item.installation_pricing_discounted))
             payment_id = db.payment_history.insert(
                 token=token,
                 payment_validation_token = puuid,
-                amount=-total,
+                amount=-float(total),
                 status=PaymentStatus.invoked,
                 organization=organization.id
             )
+            success = True
         if details.information.type == "24hours":
-            success = True  # random.choice([True, False])
             puuid = str(uuid.uuid4())
             #TODO: get the total to charge the user
             total = 10
@@ -713,6 +712,7 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
                 status=PaymentStatus.invoked,
                 organization=organization.id
             )
+            success = True  # random.choice([True, False])
         db.commit()
     except Exception as error_ex:
         error_status = True
