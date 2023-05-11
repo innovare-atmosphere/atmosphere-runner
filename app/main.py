@@ -977,7 +977,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
     }
 
 @app.get("/valid_payment/{pay_token}/{ern}")
-def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
+async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
     error_status = False
     error = None
     try:
@@ -1048,7 +1048,7 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
             USE_CREDENTIALS=True,
             TEMPLATE_FOLDER='./templates/email'
         ))
-        fm.send_message(message, template_name='email_receipt.html')
+        await fm.send_message(message, template_name='email_receipt.html')
         #redirect user
         if no_redirect:
             return {
