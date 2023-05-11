@@ -1029,7 +1029,7 @@ def valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         #Commit changes
         db.commit()
         #send payment confirmation email
-        user = db.user(id = db.access_token(token = db.check_payment.token).owner)
+        user = db.user(id = db.access_token(token = pay_info.token).owner)
         message = MessageSchema(
             subject="Atmosphere payment receipt No.{}".format(ern),
             recipients=[user.email],
