@@ -1043,8 +1043,8 @@ def payment(total: float, token: str = Header("")):
         conn = http.client.HTTPSConnection("sandbox.pagadito.com")
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
-            uid = "8e8712534becd984184b447497b6aed1",
-            wsk = "e367e770853f3887e6dd99b7ea625a0b",
+            uid = "e54ae13a6080634a157ede8a9bc44779",
+            wsk = "48f0e6a40d878a9286e82613636b6025",
             format_return = "json"
         )
         payload = urllib.parse.urlencode(params)
