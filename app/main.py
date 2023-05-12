@@ -791,9 +791,10 @@ async def validate(email: str = Body(None, embed=True), validation: Validation =
             # Send e-mail with code
             code = randint(100000, 999999)
             message = MessageSchema(
-                subject="Login code to Atmosphere",
+                subject="Login Verification Code - Atmosphere",
                 recipients=[email],
-                template_body=dict(body=dict(email=email, code=str(code))),
+                template_body=dict(body=dict(email=email, code=str(code), url = "{}".format(
+                settings.frontend_url))),
                 subtype='html',
             )
             # print(settings)
@@ -1128,10 +1129,11 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         #send payment confirmation email
         user = db.user(id = db.access_token(token = pay_info.token).owner)
         message = MessageSchema(
-            subject="Atmosphere payment receipt No.{}".format(ern),
+            subject="Payment Confirmation Number {} - Atmosphere".format(ern),
             recipients=[user.email],
-            template_body=dict(body=dict(reference=reference, ern=ern, amount = amount)),
-            subtype='html',
+            template_body=dict(body=dict(reference=reference, ern=ern, amount = amount, url = "{}".format(
+                settings.frontend_url))),
+            subtype='html'
         )
         fm = FastMail(ConnectionConfig(
             MAIL_USERNAME=settings.mail_username,
