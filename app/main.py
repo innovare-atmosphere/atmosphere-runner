@@ -1194,7 +1194,6 @@ def payment(total: float, token: str = Header("")):
                     user_token=user_token)
             )
         organization = found_organization.first()
-        db.commit()
         #Call on connect (get the pagadito token)
         import http.client
         import urllib.parse
@@ -1262,6 +1261,8 @@ def payment(total: float, token: str = Header("")):
             )
         redirect_url = jdata2.get("value")
         #Capture the url
+        #Commit all changes
+        db.commit()
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
