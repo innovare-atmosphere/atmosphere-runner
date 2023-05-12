@@ -1004,7 +1004,14 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
-        reference = jdata2.get("reference")
+        if not jdata.get("code") == "PG1003":
+            raise RuntimeError(
+                "Calling Pagadito API connect error: {} message: {}.".format(
+                    jdata2.get("code"),
+                    jdata2.get("message")
+                )
+            )
+        reference = jdata2.get("value").get("reference")
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
@@ -1108,7 +1115,14 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
-        reference = jdata2.get("reference")
+        if not jdata.get("code") == "PG1003":
+            raise RuntimeError(
+                "Calling Pagadito API connect error: {} message: {}.".format(
+                    jdata2.get("code"),
+                    jdata2.get("message")
+                )
+            )
+        reference = jdata2.get("value").get("reference")
         #Commit changes
         db.commit()
         #send payment confirmation email
