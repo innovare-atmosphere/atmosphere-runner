@@ -595,6 +595,8 @@ def my_account(token: str = Header("")):
     error_status = False
     error = None
     all_tasks = None
+    user_data = None
+    user_organizations = None
     try:
         if not valid_token(token):
             raise RuntimeError(
