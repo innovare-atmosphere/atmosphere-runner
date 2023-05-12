@@ -1004,7 +1004,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
-        if not jdata.get("code") == "PG1003":
+        if not jdata2.get("code") == "PG1003":
             raise RuntimeError(
                 "Calling Pagadito API connect error: {} message: {}.".format(
                     jdata2.get("code"),
