@@ -938,12 +938,14 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
     error = None
     status = None
     amount = None
+    reference = None
     try:
         #Get the payment
         check_payment = db(
             (db.payment_history.payment_validation_token == pay_token) &
             (db.payment_history.id == ern) &
-            (db.payment_history.token == token)
+            (db.payment_history.token == token) &
+            (db.payment_history.status == PaymentStatus.completed)
         ).select(
             db.payment_history.ALL,
             orderby=db.payment_history.id,
@@ -963,6 +965,46 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         cp = check_payment.first()
         status = cp.status
         amount = cp.amount
+        #Call Pagadito API to get the reference number
+        #Call on connect (get the pagadito token)
+        import http.client
+        import urllib.parse
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation = "f3f191ce3326905ff4403bb05b0de150",
+            uid = "e54ae13a6080634a157ede8a9bc44779",
+            wsk = "48f0e6a40d878a9286e82613636b6025",
+            format_return = "json"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata = json.loads(data)
+        if not jdata.get("code") == "PG1001":
+            raise RuntimeError(
+                "Calling Pagadito API connect error: {} message: {}.".format(
+                    jdata.get("code"),
+                    jdata.get("message")
+                )
+            )
+        pagadito_token = jdata.get("value")
+        #After that, call to create the url
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation="0b50820c65b0de71ce78f6221a5cf876",
+            token=pagadito_token,
+            token_trans=pay_token,
+            format_return = "json"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata2 = json.loads(data)
+        reference = jdata2.get("reference")
     except Exception as error_ex:
         error_status = True
         error = str(error_ex)
@@ -972,6 +1014,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         "pay_token": pay_token,
         "status": status,
         "amount": amount,
+        "reference": reference,
         "error_status": error_status,
         "error": error
     }
@@ -1026,6 +1069,46 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         db((db.organization.id == pay_info.organization)).update(
             balance = (org.balance if org.balance is not None else 0) + amount
         )
+        #Call the Pagadito API to get the reference number of the payment
+        #Call on connect (get the pagadito token)
+        import http.client
+        import urllib.parse
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation = "f3f191ce3326905ff4403bb05b0de150",
+            uid = "e54ae13a6080634a157ede8a9bc44779",
+            wsk = "48f0e6a40d878a9286e82613636b6025",
+            format_return = "json"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata = json.loads(data)
+        if not jdata.get("code") == "PG1001":
+            raise RuntimeError(
+                "Calling Pagadito API connect error: {} message: {}.".format(
+                    jdata.get("code"),
+                    jdata.get("message")
+                )
+            )
+        pagadito_token = jdata.get("value")
+        #After that, call to create the url
+        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        params = dict(
+            operation="0b50820c65b0de71ce78f6221a5cf876",
+            token=pagadito_token,
+            token_trans=pay_token,
+            format_return = "json"
+        )
+        payload = urllib.parse.urlencode(params)
+        headers = { 'content-type': "application/x-www-form-urlencoded" }
+        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        jdata2 = json.loads(data)
+        reference = jdata2.get("reference")
         #Commit changes
         db.commit()
         #send payment confirmation email
@@ -1033,7 +1116,7 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         message = MessageSchema(
             subject="Atmosphere payment receipt No.{}".format(ern),
             recipients=[user.email],
-            template_body=dict(body=dict(pay_token=pay_token, ern=ern, amount = amount)),
+            template_body=dict(body=dict(reference=reference, ern=ern, amount = amount)),
             subtype='html',
         )
         fm = FastMail(ConnectionConfig(
