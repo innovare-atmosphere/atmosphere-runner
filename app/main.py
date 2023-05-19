@@ -698,6 +698,7 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
             payment_id = db.payment_history.insert(
                 token=token,
                 payment_validation_token = puuid,
+                which=details.provider,
                 amount=-float(total),
                 status=PaymentStatus.invoked,
                 organization=organization.id
@@ -710,6 +711,7 @@ def my_tasks(details: PaymentDetails = Body(None, embed=True), token: str = Head
             payment_id = db.payment_history.insert(
                 token=token,
                 payment_validation_token = puuid,
+                which=details.provider,
                 amount=-total,
                 status=PaymentStatus.invoked,
                 organization=organization.id
@@ -1033,6 +1035,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
 async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
     error_status = False
     error = None
+    which = None
     try:
         #Get the payment
         check_payment = db(
@@ -1054,6 +1057,7 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                     )
                 )
         pay_info = check_payment.first()
+        which = pay_info.which
         #Ignore when payment already applied
         if pay_info.status == PaymentStatus.completed:
             if no_redirect:
@@ -1061,10 +1065,11 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                     "error_status": error_status,
                     "error": error
                 }
-            return RedirectResponse("{}/pay-completed/{}/{}".format(
+            return RedirectResponse("{}/pay-completed/{}/{}{}".format(
                 settings.frontend_url,
                 pay_token,
-                ern
+                ern,
+                "?which={}".format(which) or ""
             ))
         amount = pay_info.amount
         #Update the payment as valid
@@ -1156,10 +1161,11 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
                 "error_status": error_status,
                 "error": error
             }
-        return RedirectResponse("{}/pay-completed/{}/{}".format(
+        return RedirectResponse("{}/pay-completed/{}/{}{}".format(
             settings.frontend_url,
             pay_token,
-            ern
+            ern,
+            "?which={}".format(which) or ""
         ))
     except Exception as error_ex:
         error_status = True
@@ -1170,15 +1176,19 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
             "error_status": error_status,
             "error": error
         }
-    return RedirectResponse("{}/pay-completed/{}/{}".format(
+    return RedirectResponse("{}/pay-completed/{}/{}{}".format(
         settings.frontend_url,
         pay_token,
-        ern
+        ern,
+        "?which={}".format(which) or ""
     ))
 
 
 @app.get("/payment/{total}")
-def payment(total: float, token: str = Header("")):
+def payment(total: float,
+            token: str = Header(""),
+            custom_description: str = "Atmosphere funds for US$ {}",
+            which_software: str = None):
     error_status = False
     error = ""
     redirect_url = ""
@@ -1240,6 +1250,7 @@ def payment(total: float, token: str = Header("")):
         payment_id = db.payment_history.insert(
             token=token,
             payment_validation_token = pagadito_token,
+            which = which_software,
             amount=total,
             status=PaymentStatus.invoked,
             organization=organization.id
@@ -1255,7 +1266,7 @@ def payment(total: float, token: str = Header("")):
                 [
                 dict(
                     quantity = 1,
-                    description = "Atmosphere funds for US$ {}".format(total),
+                    description = custom_description.format(total),
                     price = total,
                     url_product = "",
                 )

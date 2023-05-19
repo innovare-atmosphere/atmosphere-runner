@@ -50,6 +50,7 @@ def Database(uri):
         'payment_history',
         Field('when', 'datetime', default = datetime.datetime.now()),
         Field('what', 'string'),
+        Field('which', 'string'),
         Field('token', 'string'),
         Field('payment_validation_token', 'string'),
         Field('amount', 'float'),
