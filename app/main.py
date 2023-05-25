@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     mail_port: str = ""
     mail_server: str = ""
     mail_from_name: str = ""
+    pagadito_uid: str = ""
+    pagadito_wsk: str = ""
 
     class Config:
         env_file = ".env"
@@ -977,8 +979,8 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         conn = http.client.HTTPSConnection("sandbox.pagadito.com")
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
-            uid = "e54ae13a6080634a157ede8a9bc44779",
-            wsk = "48f0e6a40d878a9286e82613636b6025",
+            uid = settings.pagadito_uid,
+            wsk = settings.pagadito_wsk,
             format_return = "json"
         )
         payload = urllib.parse.urlencode(params)
@@ -1091,8 +1093,8 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         conn = http.client.HTTPSConnection("sandbox.pagadito.com")
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
-            uid = "e54ae13a6080634a157ede8a9bc44779",
-            wsk = "48f0e6a40d878a9286e82613636b6025",
+            uid = settings.pagadito_uid,
+            wsk = settings.pagadito_wsk,
             format_return = "json"
         )
         payload = urllib.parse.urlencode(params)
@@ -1228,8 +1230,8 @@ def payment(total: float,
         conn = http.client.HTTPSConnection("sandbox.pagadito.com")
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
-            uid = "e54ae13a6080634a157ede8a9bc44779",
-            wsk = "48f0e6a40d878a9286e82613636b6025",
+            uid = settings.pagadito_uid,
+            wsk = settings.pagadito_wsk,
             format_return = "json"
         )
         payload = urllib.parse.urlencode(params)
