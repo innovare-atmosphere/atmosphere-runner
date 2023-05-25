@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     mail_from_name: str = ""
     pagadito_uid: str = ""
     pagadito_wsk: str = ""
+    pagadito_url: str = "sandbox.pagadito.com"
 
     class Config:
         env_file = ".env"
@@ -976,7 +977,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         #Call on connect (get the pagadito token)
         import http.client
         import urllib.parse
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
             uid = settings.pagadito_uid,
@@ -998,7 +999,7 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
             )
         pagadito_token = jdata.get("value")
         #After that, call to create the url
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation="0b50820c65b0de71ce78f6221a5cf876",
             token=pagadito_token,
@@ -1090,7 +1091,7 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         #Call on connect (get the pagadito token)
         import http.client
         import urllib.parse
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
             uid = settings.pagadito_uid,
@@ -1112,7 +1113,7 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
             )
         pagadito_token = jdata.get("value")
         #After that, call to create the url
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation="0b50820c65b0de71ce78f6221a5cf876",
             token=pagadito_token,
@@ -1227,7 +1228,7 @@ def payment(total: float,
         #Call on connect (get the pagadito token)
         import http.client
         import urllib.parse
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation = "f3f191ce3326905ff4403bb05b0de150",
             uid = settings.pagadito_uid,
@@ -1258,7 +1259,7 @@ def payment(total: float,
             organization=organization.id
         )
         #After that, call to create the url
-        conn = http.client.HTTPSConnection("sandbox.pagadito.com")
+        conn = http.client.HTTPSConnection(settings.pagadito_url)
         params = dict(
             operation="41216f8caf94aaa598db137e36d4673e",
             token=pagadito_token,
