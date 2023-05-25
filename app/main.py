@@ -986,7 +986,10 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata = json.loads(data)
@@ -1008,7 +1011,10 @@ def check_payment(pay_token: str, ern: str, no_redirect: bool = False, token: st
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
@@ -1100,7 +1106,10 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata = json.loads(data)
@@ -1122,7 +1131,10 @@ async def  valid_payment(pay_token: str, ern: str, no_redirect: bool = False):
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
@@ -1237,7 +1249,10 @@ def payment(total: float,
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata = json.loads(data)
@@ -1280,7 +1295,10 @@ def payment(total: float,
         )
         payload = urllib.parse.urlencode(params)
         headers = { 'content-type': "application/x-www-form-urlencoded" }
-        conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        if settings.pagadito_url == "sandbox.pagadito.com":
+            conn.request("POST", "/comercios/apipg/charges.php", payload, headers)
+        else:
+            conn.request("POST", "/apipg/charges.php", payload, headers)
         res = conn.getresponse()
         data = res.read()
         jdata2 = json.loads(data)
